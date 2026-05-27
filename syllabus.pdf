@@ -1,0 +1,131 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 1200 >>
+stream
+BT
+/F1 24 Tf
+50 750 Td
+(COURSE SYLLABUS) Tj
+ET
+BT
+/F1 18 Tf
+50 720 Td
+(Introduction to Computer Science) Tj
+ET
+BT
+/F1 12 Tf
+50 690 Td
+(Course Code: CS101) Tj
+ET
+BT
+50 670 Td
+(Instructor: Dr. Jane Smith) Tj
+ET
+BT
+50 650 Td
+(Credit Hours: 3) Tj
+ET
+BT
+/F1 14 Tf
+50 620 Td
+(Course Description) Tj
+ET
+BT
+/F1 12 Tf
+50 600 Td
+(This course introduces fundamental concepts in computer science including algorithms,) Tj
+ET
+BT
+50 580 Td
+(data structures, and programming. Students will learn problem-solving techniques and) Tj
+ET
+BT
+50 560 Td
+(write programs in Python.) Tj
+ET
+BT
+/F1 14 Tf
+50 530 Td
+(Course Objectives) Tj
+ET
+BT
+/F1 12 Tf
+50 510 Td
+(1. Understand fundamental programming concepts) Tj
+ET
+BT
+50 490 Td
+(2. Learn data structures and algorithms) Tj
+ET
+BT
+50 470 Td
+(3. Develop problem-solving skills) Tj
+ET
+BT
+50 450 Td
+(4. Practice software development best practices) Tj
+ET
+BT
+/F1 14 Tf
+50 420 Td
+(Topics Covered) Tj
+ET
+BT
+/F1 12 Tf
+50 400 Td
+(Module 1: Introduction to Programming - Variables, data types, loops, conditionals) Tj
+ET
+BT
+50 380 Td
+(Module 2: Functions and Modular Design - Function definition, scope, recursion) Tj
+ET
+BT
+50 360 Td
+(Module 3: Data Structures - Lists, tuples, dictionaries, sets) Tj
+ET
+BT
+50 340 Td
+(Module 4: Algorithms - Sorting, searching, complexity analysis) Tj
+ET
+BT
+50 320 Td
+(Module 5: Object-Oriented Programming - Classes, inheritance, polymorphism) Tj
+ET
+BT
+/F1 14 Tf
+50 290 Td
+(Assessment) Tj
+ET
+BT
+/F1 12 Tf
+50 270 Td
+(Quizzes: 20%, Assignments: 30%, Midterm: 20%, Final Project: 30%) Tj
+ET
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000010 00000 n 
+0000000061 00000 n 
+0000000112 00000 n 
+0000000210 00000 n 
+0000001466 00000 n 
+trailer
+<< /Root 1 0 R /Size 6 >>
+startxref
+1544
+%%EOF
