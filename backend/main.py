@@ -1,19 +1,17 @@
-import os
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import List, Optional
 import json
+import os
+import re
 from typing import List
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from google import genai
 from google.genai import types
+from pydantic import BaseModel
 from pypdf import PdfReader
-from urllib.parse import quote_plus
-import re
 
 app = FastAPI()
 
-# This tells the server it is safe to talk to your web browser interface
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,157 +20,279 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. We define the clean template structure we want back from the AI
-class StudyResource(BaseModel):
-    title: str = Field(description="Title of the study resource")
-    url: Optional[str] = Field(None, description="Optional link to the study resource")
 
-class Topic(BaseModel):
-    title: str = Field(description="Name of the topic or concept")
-    difficulty: str = Field(description="Difficulty level: Beginner, Intermediate, or Advanced")
-    hours: int = Field(description="Estimated hours to complete")
-    sequence: Optional[int] = Field(None, description="Recommended order position within the roadmap")
-    description: Optional[str] = Field(None, description="Optional longer description of the topic")
-    resources: List[StudyResource] = Field(default_factory=list, description="Recommended study materials for this topic")
+class SubTopic(BaseModel):
+    title: str
+    description: str
+    estimated_minutes: int
 
-class CourseModule(BaseModel):
-    module_name: str = Field(description="Title of the unit or chapter")
-    description: Optional[str] = Field(None, description="Optional module-level description")
-    topics: List[Topic] = Field(description="Core sub-topics inside this module")
+
+class LearningStep(BaseModel):
+    step_number: int
+    step_title: str
+    difficulty: str
+    sub_topics: List[SubTopic]
+
 
 class StructuredSyllabus(BaseModel):
-    course_name: str = Field(description="The official title of the course")
-    roadmap: List[CourseModule] = Field(description="Chronological study roadmap")
+    course_name: str
+    target_learning_flow: List[LearningStep]
 
-API_KEY = os.getenv("GOOGLE_GENAI_API_KEY")
+
+class TopicStudyMaterialRequest(BaseModel):
+    topic_title: str
+    topic_description: str = ""
+    raw_text: str = ""
+
+
+class TopicStudyMaterialResponse(BaseModel):
+    topic_title: str
+    high_yield_summary: str
+    must_know_definition: str
+    common_student_trap: str
+    active_recall_questions: List[str]
+    active_recall_answers: List[str]
+    practical_application: str
+
+
+class TopicQuizRequest(BaseModel):
+    topic_title: str
+    topic_description: str = ""
+    raw_text: str = ""
+    difficulty: str = "Intermediate"
+
+
+class QuizQuestionItem(BaseModel):
+    difficulty_level: str
+    question: str
+    options: List[str]
+    correct_answer: str
+    explanation: str
+
+
+class TopicQuizResponse(BaseModel):
+    topic_title: str
+    quiz: List[QuizQuestionItem]
+
+
+def _load_env_file() -> None:
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.isfile(env_path):
+        return
+    with open(env_path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def _api_key() -> str | None:
+    for name in ("GOOGLE_GENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return None
+
+
+_load_env_file()
+API_KEY = _api_key()
+ai_client = None
 if API_KEY:
-    # Connect to the modern native Gemini AI client
-    ai_client = genai.Client(api_key=API_KEY)
-else:
-    # No API key — run in local dev fallback mode (returns sample data)
-    ai_client = None
+    try:
+        ai_client = genai.Client(api_key=API_KEY)
+    except Exception as exc:
+        print(f"WARNING: Gemini client failed to initialize: {exc}")
+
+
+@app.get("/api/health")
+async def health():
+    return {
+        "status": "ok",
+        "ai_enabled": ai_client is not None,
+        "ai_mode": "gemini" if ai_client is not None else "local_fallback",
+    }
+
+
+def _clean_text(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^A-Za-z0-9:,\- ]+", " ", text)).strip()
+
+
+def _extract_ordered_topics(raw_text: str) -> List[str]:
+    ordered: List[str] = []
+    for raw_line in raw_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.match(
+            r"^(Module|Week|Unit|Chapter|Topic|Section)\s*[\dA-Za-z\-]*\s*[:\-]\s*(.+)$",
+            line,
+            re.I,
+        )
+        if not match:
+            continue
+        payload = match.group(2)
+        for part in re.split(r"[-,;/]", payload):
+            topic = _clean_text(part).title()
+            if len(topic) >= 4 and topic.lower() not in {"ltpc", "credits"}:
+                ordered.append(topic)
+    if ordered:
+        return list(dict.fromkeys(ordered))
+
+    for raw_line in raw_text.splitlines():
+        line = _clean_text(raw_line).title()
+        if 6 <= len(line) <= 70 and not re.search(
+            r"\b(course code|instructor|credit hours|assessment)\b", line, re.I
+        ):
+            ordered.append(line)
+        if len(ordered) >= 8:
+            break
+    return list(dict.fromkeys(ordered))
+
+
+def _chunk(items: List[str], size: int) -> List[List[str]]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def _difficulty_for(step_number: int, total_steps: int) -> str:
+    if total_steps <= 2:
+        return "Easy" if step_number == 1 else "Intermediate"
+    if step_number == 1:
+        return "Easy"
+    if step_number == total_steps:
+        return "Advanced"
+    return "Intermediate"
+
+
+def generate_dev_roadmap(raw_text: str, filename: str) -> dict:
+    topics = _extract_ordered_topics(raw_text)
+    if not topics:
+        clean_name = filename.replace(".pdf", "").replace("_", " ").title()
+        topics = [
+            f"{clean_name} Foundations",
+            "Core Concepts",
+            "Applied Practice",
+            "Advanced Integration",
+        ]
+
+    grouped = _chunk(topics, 2)
+    total_steps = len(grouped)
+    flow = []
+    for step_idx, group in enumerate(grouped, start=1):
+        sub_topics = []
+        for sub_idx, sub_title in enumerate(group, start=1):
+            sub_topics.append(
+                {
+                    "title": sub_title,
+                    "description": (
+                        f"Master {sub_title} with definition, worked examples, "
+                        "and exam-style reasoning."
+                    ),
+                    "estimated_minutes": 35 + (sub_idx * 10),
+                }
+            )
+        flow.append(
+            {
+                "step_number": step_idx,
+                "step_title": f"Step {step_idx}: {group[0]}",
+                "difficulty": _difficulty_for(step_idx, total_steps),
+                "sub_topics": sub_topics,
+            }
+        )
+
+    return {
+        "course_name": filename.replace(".pdf", "").replace("_", " ").title(),
+        "target_learning_flow": flow,
+    }
 
 
 @app.post("/api/parse-syllabus")
 async def parse_syllabus(file: UploadFile = File(...)):
-    print("parse_syllabus handler file=", __file__)
     raw_text = ""
-    
-    # Check file type and extract text accordingly
-    if file.content_type == "application/pdf":
+    used_image_fallback = False
+    content_type = file.content_type or ""
+    filename = file.filename or "uploaded syllabus"
+
+    if content_type == "application/pdf":
         try:
-            from pypdf import PdfReader
             pdf_reader = PdfReader(file.file)
-            for page in pdf_reader.pages:
-                raw_text += page.extract_text() or ""
+            extracted_pages = [page.extract_text() or "" for page in pdf_reader.pages]
+            raw_text = "\n".join(extracted_pages).strip()
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Unable to read PDF: {exc}") from exc
-    elif file.content_type and file.content_type.startswith("image/"):
+
+        if len(raw_text) < 50:
+            raise HTTPException(
+                status_code=400,
+                detail="This PDF looks like a scanned image. Please upload a text-based PDF.",
+            )
+
+    elif content_type.startswith("image/"):
         try:
             from PIL import Image
             import pytesseract
-            img = Image.open(file.file)
-            raw_text = pytesseract.image_to_string(img)
+
+            image = Image.open(file.file)
+            raw_text = (pytesseract.image_to_string(image) or "").strip()
         except ImportError:
-            print("OCR libraries not available, using filename-based fallback")
-            raw_text = f"Image: {file.filename}"
-        except Exception as exc:
-            print(f"OCR error: {exc}, using filename-based fallback")
-            raw_text = f"Image: {file.filename}"
+            used_image_fallback = True
+            readable_name = re.sub(r"[_\-]+", " ", filename).strip()
+            raw_text = (
+                f"Uploaded syllabus image about {readable_name}. "
+                "OCR libraries are unavailable, so inferred topic text from filename."
+            )
+        except Exception:
+            used_image_fallback = True
+            readable_name = re.sub(r"[_\-]+", " ", filename).strip()
+            raw_text = (
+                f"Uploaded syllabus image about {readable_name}. "
+                "OCR extraction failed, so inferred topic text from filename."
+            )
+
+        if not used_image_fallback and len(raw_text) < 50:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Unable to extract readable text from this image. "
+                    "Please upload a clearer photo or a text-based PDF."
+                ),
+            )
+
     else:
         raise HTTPException(status_code=400, detail="File must be a PDF or image (PNG, JPG)")
 
-    # Check if extracted text is sufficient (not a scanned image with no text)
-    if len(raw_text.strip()) < 50:
-        raise HTTPException(status_code=400, detail="This PDF looks like a scanned image. Please upload a text-based PDF.")
-
-    # If no AI client configured, generate a development roadmap based on the uploaded content
     if ai_client is None:
-        sample = generate_dev_roadmap(raw_text, file.filename)
+        sample = generate_dev_roadmap(raw_text, filename)
+        sample["raw_text"] = raw_text
         return sample
 
-def generate_dev_roadmap(raw_text: str, filename: str) -> dict:
-    def normalize_heading(line: str) -> str:
-        return re.sub(r"[^A-Za-z0-9 ]+", " ", line).strip().title()
+    prompt = f"""
+You are an elite academic curriculum architect. Analyze this syllabus and reconstruct it into a flawless, logically ordered, step-by-step chronological learning pathway.
 
-    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
-    headings = []
-    for line in lines:
-        if re.match(r"^(Module|Week|Topic|Section)\b", line, re.I):
-            headings.append(normalize_heading(line))
-        elif len(headings) < 6 and len(line) < 60 and line.isupper():
-            headings.append(normalize_heading(line))
-        if len(headings) >= 6:
-            break
+Requirements:
+- Set `course_name` from the syllabus title or subject.
+- Use `target_learning_flow` with 4–8 learning steps when the syllabus is substantial (fewer if the syllabus is short).
+- Each step must have `step_number`, `step_title`, `difficulty` (Easy, Intermediate, or Advanced), and `sub_topics`.
+- Each sub-topic needs a specific `title`, a practical one-sentence `description`, and realistic `estimated_minutes` (30–120).
+- Order topics so prerequisites always come first; never skip ahead to advanced material.
+- Extract real module/week/topic names from the syllabus text; do not invent generic placeholders.
 
-    if not headings:
-        snippet = raw_text.replace("\n", " ")[:120]
-        headings = [f"Introduction to {filename.replace('.pdf','').replace('_',' ').title()}", "Core Concepts", "Advanced Practice"]
-        if snippet:
-            headings[0] = f"Introduction to {snippet.split(' ')[0]}"
-
-    topics = []
-    for idx, heading in enumerate(headings[:5], start=1):
-        topic_title = heading if heading else f"Topic {idx}"
-        difficulty = "Beginner" if idx == 1 else "Intermediate" if idx == 2 else "Advanced" if idx >= 4 else "Intermediate"
-        resources = [
-            {
-                "title": f"Search for {topic_title}",
-                "url": f"https://www.google.com/search?q={quote_plus(topic_title + ' tutorial')}"
-            },
-            {
-                "title": f"Wikipedia: {topic_title}",
-                "url": f"https://en.wikipedia.org/wiki/{quote_plus(topic_title).replace('+', '_')}"
-            }
-        ]
-        topics.append(
-            {
-                "title": topic_title,
-                "difficulty": difficulty,
-                "hours": max(1, 2 + (idx - 1) * 1),
-                "sequence": idx,
-                "description": f"A focused study topic based on the syllabus content for {topic_title}.",
-                "resources": resources,
-            }
-        )
-
-    roadmap = [
-        {
-            "module_name": "Foundations",
-            "description": "Key topics to begin your learning journey.",
-            "topics": topics[:2],
-        },
-        {
-            "module_name": "Intermediate Practice",
-            "description": "Build experience with practical application.",
-            "topics": topics[2:4] or topics[2:],
-        },
-        {
-            "module_name": "Advanced Mastery",
-            "description": "Finish with deeper, high-impact topics.",
-            "topics": topics[4:] or [],
-        },
-    ]
-
-    if not roadmap[2]["topics"]:
-        roadmap = roadmap[:2]
-
-    return {
-        "course_name": f"{filename.replace('.pdf', '').replace('_', ' ').title()} Study Plan",
-        "roadmap": roadmap,
-    }
-
-    # Send the raw text to Gemini 2.5 Flash and force it to fill out our template layout
-    prompt = f"Convert this raw syllabus text cleanly into the requested structured JSON template layout:\n\n{raw_text}"
+Syllabus Source Text:
+{raw_text}
+"""
 
     try:
         response = ai_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=StructuredSyllabus,
-                temperature=0.1
+                temperature=0.1,
             ),
         )
     except Exception as exc:
@@ -183,10 +303,263 @@ def generate_dev_roadmap(raw_text: str, filename: str) -> dict:
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=502, detail="Backend returned invalid JSON") from exc
 
+    parsed["raw_text"] = raw_text
     return parsed
+
+
+@app.post("/api/topic-study-material", response_model=TopicStudyMaterialResponse)
+async def generate_topic_study_material(payload: TopicStudyMaterialRequest):
+    if ai_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "AI study content generation is unavailable. "
+                "Set GOOGLE_GENAI_API_KEY in backend/.env to enable Gemini-powered topic notes."
+            ),
+        )
+
+    prompt = f"""
+You are an elite university tutor.
+Generate exam-focused study material for this topic.
+Keep every section specific, practical, and directly useful for revision.
+
+Topic:
+{payload.topic_title}
+
+Topic context:
+{payload.topic_description}
+
+Syllabus context:
+{payload.raw_text}
+"""
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "topic_title": {"type": "string"},
+            "high_yield_summary": {"type": "string"},
+            "must_know_definition": {"type": "string"},
+            "common_student_trap": {"type": "string"},
+            "active_recall_questions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 3,
+                "maxItems": 3,
+            },
+            "active_recall_answers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 3,
+                "maxItems": 3,
+            },
+            "practical_application": {"type": "string"},
+        },
+        "required": [
+            "topic_title",
+            "high_yield_summary",
+            "must_know_definition",
+            "common_student_trap",
+            "active_recall_questions",
+            "active_recall_answers",
+            "practical_application",
+        ],
+    }
+
+    try:
+        response = ai_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=schema,
+                temperature=0.2,
+            ),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI request failed: {exc}") from exc
+
+    try:
+        parsed = json.loads(response.text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Backend returned invalid JSON for topic study material",
+        ) from exc
+
+    try:
+        return TopicStudyMaterialResponse(**parsed)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Generated AI output did not match expected format: {exc}",
+        ) from exc
+
+
+def _fallback_topic_quiz(topic_title: str, topic_description: str, difficulty: str) -> dict:
+    """Deterministic quiz when Gemini is unavailable."""
+    title = topic_title.strip() or "this topic"
+    desc = (topic_description or title).strip()
+    return {
+        "topic_title": title,
+        "quiz": [
+            {
+                "difficulty_level": "Easy",
+                "question": f"What is the central learning objective of {title}?",
+                "options": [
+                    f"Apply core concepts of {title} to explain and solve course problems",
+                    "Memorize unrelated facts with no link to the syllabus",
+                    "Skip foundational ideas and only read the unit title",
+                    "Avoid practice because this topic is never assessed",
+                ],
+                "correct_answer": f"Apply core concepts of {title} to explain and solve course problems",
+                "explanation": f"Syllabus focus: {desc}",
+            },
+            {
+                "difficulty_level": "Moderate",
+                "question": f"Which strategy best prepares you for an exam question on {title}?",
+                "options": [
+                    "State definitions, study a worked example, then solve a similar problem",
+                    "Only re-read the heading without notes or practice",
+                    "Study unrelated units instead of this topic",
+                    "Copy solutions without understanding the method",
+                ],
+                "correct_answer": "State definitions, study a worked example, then solve a similar problem",
+                "explanation": "Exam-style mastery requires understanding plus deliberate practice.",
+            },
+            {
+                "difficulty_level": "Moderate",
+                "question": f"A scenario-based question mentions {title}. What should you do first?",
+                "options": [
+                    "Identify knowns/unknowns, recall the relevant principle, then reason step by step",
+                    "Guess the letter immediately with no written work",
+                    "Leave it blank because it was not in the title",
+                    "Use a rule from a completely different module",
+                ],
+                "correct_answer": "Identify knowns/unknowns, recall the relevant principle, then reason step by step",
+                "explanation": f"Structured reasoning is expected at {difficulty} level.",
+            },
+            {
+                "difficulty_level": "Tough",
+                "question": f"Which misconception about {title} is most dangerous before the final?",
+                "options": [
+                    "Assuming you can skip it because later topics never build on it",
+                    "Checking whether your answer matches units and logical constraints",
+                    "Relating new problems to a previously solved example",
+                    "Reviewing mistakes from practice questions",
+                ],
+                "correct_answer": "Assuming you can skip it because later topics never build on it",
+                "explanation": "Syllabus order usually encodes prerequisites.",
+            },
+            {
+                "difficulty_level": "Tough",
+                "question": f"How would an expert instructor evaluate your understanding of {title}?",
+                "options": [
+                    "You can explain the idea, justify each step, and transfer it to a novel scenario",
+                    "You can spell the topic name correctly only",
+                    "You list chapter numbers without explaining mechanisms",
+                    "You recall one memorized answer but cannot adapt it",
+                ],
+                "correct_answer": "You can explain the idea, justify each step, and transfer it to a novel scenario",
+                "explanation": "Deep understanding shows in explanation and transfer, not recall alone.",
+            },
+        ],
+    }
+
+
+@app.post("/api/topic-quiz", response_model=TopicQuizResponse)
+async def generate_topic_quiz(payload: TopicQuizRequest):
+    title = payload.topic_title.strip() or "Topic"
+    description = payload.topic_description.strip()
+    difficulty = payload.difficulty.strip() or "Intermediate"
+    context = (payload.raw_text or "")[:12000]
+
+    if ai_client is None:
+        return TopicQuizResponse(**_fallback_topic_quiz(title, description, difficulty))
+
+    prompt = f"""
+You are an expert university instructor creating a multiple-choice practice quiz.
+Write questions at the quality level of ChatGPT or Gemini tutoring: precise, conceptual, and exam-realistic.
+
+Topic: {title}
+Topic summary: {description or "See syllabus context."}
+Course difficulty band: {difficulty}
+
+Syllabus context (use for accuracy; do not invent unrelated content):
+{context or "No extra syllabus text provided — stay faithful to the topic title and summary."}
+
+Requirements:
+- Return exactly 5 questions.
+- Each question must have exactly 4 distinct answer options (full sentences, not single letters).
+- Mix difficulty_level values: include at least one Easy, two Moderate, and two Tough.
+- Questions must test understanding, application, and common misconceptions — not meta questions about studying.
+- correct_answer must match one option exactly (character-for-character).
+- explanation: 1–2 sentences clarifying why the correct option is right.
+- Avoid trick questions, avoid "all of the above", avoid duplicate options.
+"""
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "topic_title": {"type": "string"},
+            "quiz": {
+                "type": "array",
+                "minItems": 5,
+                "maxItems": 5,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "difficulty_level": {
+                            "type": "string",
+                            "enum": ["Easy", "Moderate", "Tough"],
+                        },
+                        "question": {"type": "string"},
+                        "options": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 4,
+                            "maxItems": 4,
+                        },
+                        "correct_answer": {"type": "string"},
+                        "explanation": {"type": "string"},
+                    },
+                    "required": [
+                        "difficulty_level",
+                        "question",
+                        "options",
+                        "correct_answer",
+                        "explanation",
+                    ],
+                },
+            },
+        },
+        "required": ["topic_title", "quiz"],
+    }
+
+    try:
+        response = ai_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=schema,
+                temperature=0.35,
+            ),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI quiz generation failed: {exc}") from exc
+
+    try:
+        parsed = json.loads(response.text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="Backend returned invalid JSON for quiz") from exc
+
+    try:
+        return TopicQuizResponse(**parsed)
+    except Exception:
+        return TopicQuizResponse(**_fallback_topic_quiz(title, description, difficulty))
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
