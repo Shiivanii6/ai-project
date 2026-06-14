@@ -60,7 +60,7 @@ class TopicQuizRequest(BaseModel):
     topic_description: str = ""
     raw_text: str = ""
     difficulty: str = "Intermediate"
-
+    ai_style: str = "Gemini"   # 👈 NEW: "ChatGPT", "Gemini", or "Claude"
 
 class QuizQuestionItem(BaseModel):
     difficulty_level: str
@@ -68,6 +68,7 @@ class QuizQuestionItem(BaseModel):
     options: List[str]
     correct_answer: str
     explanation: str
+    ai_style: str  # ← ADD THIS (e.g., "ChatGPT", "Gemini", "Claude")
 
 
 class TopicQuizResponse(BaseModel):
@@ -395,11 +396,18 @@ Syllabus context:
         ) from exc
 
 
-def _fallback_topic_quiz(topic_title: str, topic_description: str, difficulty: str) -> dict:
+def _fallback_topic_quiz(
+    topic_title: str,
+    topic_description: str,
+    difficulty: str,
+) -> dict:
     """Deterministic quiz when Gemini is unavailable."""
+    """Deterministic quiz when Gemini is unavailable."""
+    
     title = topic_title.strip() or "this topic"
     desc = (topic_description or title).strip()
     return {
+        "ai_style": "ChatGPT",
         "topic_title": title,
         "quiz": [
             {
@@ -464,7 +472,32 @@ def _fallback_topic_quiz(topic_title: str, topic_description: str, difficulty: s
             },
         ],
     }
-
+def _get_style_instruction(ai_style: str) -> str:
+    styles = {
+        "ChatGPT": """
+You write questions like ChatGPT — friendly, practical, and real-world focused.
+- Use everyday relatable scenarios (e.g., "You are building an app that...")
+- Questions feel like a helpful tutor is asking them
+- Options are clear, not tricky
+- Easy to understand even for beginners
+""",
+        "Gemini": """
+You write questions like Gemini — structured, multi-step, and concept-focused.
+- Ask "which of the following best explains..." type questions
+- Include questions that require connecting two ideas together
+- Options are detailed and test deeper understanding
+- Professional and textbook-like tone
+""",
+        "Claude": """
+You write questions like Claude — thoughtful, nuanced, and edge-case focused.
+- Include "what is wrong with this approach?" style questions
+- Test misconceptions and subtle differences between similar concepts
+- At least one question should present a flawed code/logic and ask what's wrong
+- Encourage critical thinking over memorization
+""",
+    }
+    # If unknown style, default to Gemini style
+    return styles.get(ai_style, styles["Gemini"])
 
 @app.post("/api/topic-quiz", response_model=TopicQuizResponse)
 async def generate_topic_quiz(payload: TopicQuizRequest):
@@ -475,10 +508,11 @@ async def generate_topic_quiz(payload: TopicQuizRequest):
 
     if ai_client is None:
         return TopicQuizResponse(**_fallback_topic_quiz(title, description, difficulty))
-
+    style_instruction = _get_style_instruction(payload.ai_style)
     prompt = f"""
+
 You are an expert university instructor creating a multiple-choice practice quiz.
-Write questions at the quality level of ChatGPT or Gemini tutoring: precise, conceptual, and exam-realistic.
+{style_instruction}
 
 Topic: {title}
 Topic summary: {description or "See syllabus context."}
@@ -495,6 +529,7 @@ Requirements:
 - correct_answer must match one option exactly (character-for-character).
 - explanation: 1–2 sentences clarifying why the correct option is right.
 - Avoid trick questions, avoid "all of the above", avoid duplicate options.
+
 """
 
     schema = {
@@ -506,8 +541,13 @@ Requirements:
                 "minItems": 5,
                 "maxItems": 5,
                 "items": {
+                    
                     "type": "object",
                     "properties": {
+                        "ai_style": {
+                             "type": "string",
+                             "enum": ["ChatGPT", "Gemini", "Claude", "Perplexity", "Mixed"],
+                             },
                         "difficulty_level": {
                             "type": "string",
                             "enum": ["Easy", "Moderate", "Tough"],
