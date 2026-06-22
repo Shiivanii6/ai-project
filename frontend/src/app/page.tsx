@@ -43,6 +43,8 @@ export default function StudentDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [aiTopicMaterial, setAiTopicMaterial] = useState<any>(null);
   const [aiMaterialLoading, setAiMaterialLoading] = useState(false);
+  const [topicQuizzes, setTopicQuizzes] = useState<Map<string, any>>(new Map());
+  const [quizLoading, setQuizLoading] = useState(false);
 
   const roadmapData = React.useMemo(() => {
     if (!data) return [];
@@ -79,17 +81,29 @@ export default function StudentDashboard() {
     formData.append("file", file);
 
     try {
+      console.log("🚀 Starting file upload...", { fileName: file.name, fileSize: file.size });
       const response = await fetch("/api/parse-syllabus", {
         method: "POST",
         body: formData,
       });
 
+      console.log("📥 Response received:", { status: response.status, statusText: response.statusText });
+
       if (!response.ok) {
         throw new Error(`Upload failed with status: ${response.status}`);
       }
 
-      const result = await response.json();
+      const text = await response.text();
+      console.log("📝 Response text length:", text.length);
       
+      const result = JSON.parse(text);
+      console.log("✅ Upload successful! Data parsed:", {
+        courseN: result?.course_name,
+        steps: result?.target_learning_flow?.length,
+        rawTextLength: result?.raw_text?.length,
+      });
+      
+      console.log("🔄 Setting state...");
       setData(result);
       setRawText(result?.raw_text || "");
       setActiveTab("Study Roadmap");
@@ -99,11 +113,14 @@ export default function StudentDashboard() {
       const safetyFlow = result?.target_learning_flow || result?.roadmap || [];
       const firstTopicList = safetyFlow?.[0]?.sub_topics || safetyFlow?.[0]?.topics;
       setSelectedTopic(Array.isArray(firstTopicList) && firstTopicList.length > 0 ? { moduleIndex: 0, topicIndex: 0 } : null);
+      console.log("✅ State updated!");
 
     } catch (err: any) {
+      const errorMsg = `❌ Upload error: ${err.message}`;
+      console.error(errorMsg, err);
       setError("An error occurred while connecting to the backend server. Please make sure your python backend is running.");
-      console.error(err);
     } finally {
+      console.log("🏁 Upload finished");
       setLoading(false);
       setIsDragging(false);
     }
@@ -142,6 +159,35 @@ export default function StudentDashboard() {
     }
   };
 
+  const generateQuiz = async () => {
+    if (!selectedTopicData) return;
+    const quizKey = `${selectedTopic?.moduleIndex}-${selectedTopic?.topicIndex}`;
+    if (topicQuizzes.has(quizKey)) return; // Already generated
+
+    setQuizLoading(true);
+    try {
+      const response = await fetch("/api/topic-quiz", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic_title: selectedTopicData.title,
+          topic_description: selectedTopicData.description ?? "",
+          raw_text: rawText || data?.raw_text || "",
+          difficulty: selectedTopicData.difficulty || "Intermediate",
+          ai_style: "Gemini",
+        }),
+      });
+      if (!response.ok) throw new Error("Failed to generate quiz.");
+      const result = await response.json();
+      setTopicQuizzes(new Map(topicQuizzes).set(quizKey, result));
+    } catch (error) {
+      console.error("Quiz generation error:", error);
+      setError("Failed to generate quiz. Please try again.");
+    } finally {
+      setQuizLoading(false);
+    }
+  };
+
   const totalTopics = roadmapData.flatMap((module: any) => module.topics ?? []).length ?? 0;
   const completion = data ? Math.min(100, Math.max(18, totalTopics * 17)) : 18;
   const progressStyle = {
@@ -172,6 +218,9 @@ export default function StudentDashboard() {
   const selectedTopicData = selectedTopic && roadmapData?.[selectedTopic.moduleIndex]?.topics?.[selectedTopic.topicIndex]
     ? roadmapData[selectedTopic.moduleIndex].topics[selectedTopic.topicIndex]
     : null;
+
+  const quizKey = selectedTopic ? `${selectedTopic.moduleIndex}-${selectedTopic.topicIndex}` : null;
+  const currentQuiz = quizKey ? topicQuizzes.get(quizKey) : null;
 
   const buildAiStudyLinks = (topicTitle?: string, topicDescription?: string) => {
     if (!topicTitle) return [];
@@ -299,7 +348,7 @@ export default function StudentDashboard() {
                   {selectedTopicData ? selectedTopicData.description : "Choose a topic card on the left to reveal its focused study resources."}
                 </div>
                 {selectedTopicData && (
-                  <div className="mt-4">
+                  <div className="mt-4 flex gap-2">
                     <button
                       type="button"
                       onClick={generateAiTopicMaterial}
@@ -307,6 +356,14 @@ export default function StudentDashboard() {
                       className="rounded-full bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-60"
                     >
                       {aiMaterialLoading ? "Generating AI notes..." : "Generate AI Notes for this Topic"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={generateQuiz}
+                      disabled={quizLoading || (quizKey ? topicQuizzes.has(quizKey) : false)}
+                      className="rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
+                    >
+                      {quizLoading ? "Generating Quiz..." : quizKey && topicQuizzes.has(quizKey) ? "Quiz Ready" : "Generate Quiz"}
                     </button>
                   </div>
                 )}
@@ -344,6 +401,45 @@ export default function StudentDashboard() {
                     )}
                   </div>
                 </div>
+
+                {currentQuiz && currentQuiz.quiz && currentQuiz.quiz.length > 0 && (
+                  <div className="mt-8 rounded-[28px] border border-teal-500/30 bg-teal-500/5 p-5">
+                    <p className="text-sm font-semibold text-teal-100">📊 Topic Quiz - {currentQuiz.quiz.length} Questions</p>
+                    <div className="mt-4 space-y-4">
+                      {currentQuiz.quiz.map((question: any, qIdx: number) => (
+                        <div key={qIdx} className="rounded-[20px] border border-teal-400/30 bg-teal-950/40 p-4">
+                          <div className="flex items-start justify-between gap-2 mb-3">
+                            <p className="text-sm font-semibold text-teal-100">Q{qIdx + 1}: {question.question}</p>
+                            <span className="text-xs font-bold px-2 py-1 rounded-full bg-teal-500/20 text-teal-300">
+                              {question.difficulty_level}
+                            </span>
+                          </div>
+                          <div className="space-y-2">
+                            {question.options?.map((option: string, oIdx: number) => {
+                              const isCorrect = option === question.correct_answer;
+                              return (
+                                <button
+                                  key={oIdx}
+                                  type="button"
+                                  onClick={() => {
+                                    if (isCorrect) {
+                                      alert(`✅ CORRECT!\n\n${question.explanation}`);
+                                    } else {
+                                      alert(`❌ Not quite.\n\nCorrect answer: ${question.correct_answer}\n\n${question.explanation}`);
+                                    }
+                                  }}
+                                  className="w-full text-left text-xs bg-slate-900/50 hover:bg-teal-900/30 border border-teal-400/20 p-3 rounded-lg text-slate-300 hover:text-teal-100 transition-all"
+                                >
+                                  {option}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

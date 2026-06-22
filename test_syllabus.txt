@@ -1,0 +1,40 @@
+﻿# Computer Science 101 - Syllabus
+
+## Course Information
+- Instructor: Prof. Smith
+- Credit Hours: 3
+- Meeting Times: MW 10:00-11:30 AM
+
+## Course Description
+Introduction to Computer Science fundamentals covering basic programming, algorithms, and data structures.
+
+## Topics and Learning Objectives
+
+### Module 1: Introduction to Programming Basics
+- Week 1: Variables and Data Types
+- Week 2: Control Flow (if/else, loops)
+- Week 3: Functions and Modularity
+
+### Module 2: Data Structures
+- Week 4: Arrays and Lists
+- Week 5: Stacks and Queues
+- Week 6: Hash Tables
+
+### Module 3: Algorithms
+- Week 7: Sorting Algorithms
+- Week 8: Searching and Recursion
+- Week 9: Graph Algorithms
+
+### Module 4: Advanced Topics
+- Week 10: Object-Oriented Programming
+- Week 11: Design Patterns
+- Week 12: Final Project and Review
+
+## Assessment
+- Midterm Exam: 30%
+- Programming Assignments: 40%
+- Final Project: 20%
+- Class Participation: 10%
+
+## Required Textbook
+Introduction to Algorithms by Cormen, Leiserson, Rivest, and Stein

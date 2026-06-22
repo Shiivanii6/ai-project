@@ -5,8 +5,14 @@ from typing import List
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-import google.generativeai as genai
-from google.genai import types
+
+try:
+    import google.genai as genai
+    from google.genai import types
+except ImportError:
+    genai = None
+    types = None
+
 from pydantic import BaseModel
 from pypdf import PdfReader
 
@@ -106,8 +112,12 @@ ai_client = None
 if API_KEY:
     try:
         ai_client = genai.Client(api_key=API_KEY)
+        print(f"✅ Gemini client initialized successfully with API key: {API_KEY[:20]}...")
     except Exception as exc:
-        print(f"WARNING: Gemini client failed to initialize: {exc}")
+        print(f"❌ WARNING: Gemini client failed to initialize: {exc}")
+        ai_client = None
+else:
+    print("⚠️ WARNING: No GOOGLE_GENAI_API_KEY found in environment or .env file")
 
 
 @app.get("/api/health")
@@ -267,10 +277,12 @@ async def parse_syllabus(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="File must be a PDF or image (PNG, JPG)")
 
     if ai_client is None:
+        print("⚠️ AI client not available, using local fallback for parse-syllabus")
         sample = generate_dev_roadmap(raw_text, filename)
         sample["raw_text"] = raw_text
         return sample
 
+    print(f"🚀 Generating roadmap with Gemini for: {filename}")
     prompt = f"""
 You are an elite academic curriculum architect. Analyze this syllabus and reconstruct it into a flawless, logically ordered, step-by-step chronological learning pathway.
 
@@ -296,7 +308,9 @@ Syllabus Source Text:
                 temperature=0.1,
             ),
         )
+        print("✅ Gemini successfully generated roadmap")
     except Exception as exc:
+        print(f"❌ AI request failed: {exc}")
         raise HTTPException(status_code=502, detail=f"AI request failed: {exc}") from exc
 
     try:
@@ -311,6 +325,7 @@ Syllabus Source Text:
 @app.post("/api/topic-study-material", response_model=TopicStudyMaterialResponse)
 async def generate_topic_study_material(payload: TopicStudyMaterialRequest):
     if ai_client is None:
+        print("❌ AI client not available for topic study material generation")
         raise HTTPException(
             status_code=503,
             detail=(
@@ -319,6 +334,7 @@ async def generate_topic_study_material(payload: TopicStudyMaterialRequest):
             ),
         )
 
+    print(f"🚀 Generating study material with Gemini for topic: {payload.topic_title}")
     prompt = f"""
 You are an elite university tutor.
 Generate exam-focused study material for this topic.
@@ -376,7 +392,9 @@ Syllabus context:
                 temperature=0.2,
             ),
         )
+        print(f"✅ Gemini successfully generated study material for topic: {payload.topic_title}")
     except Exception as exc:
+        print(f"❌ AI request failed for study material: {exc}")
         raise HTTPException(status_code=502, detail=f"AI request failed: {exc}") from exc
 
     try:
@@ -407,10 +425,10 @@ def _fallback_topic_quiz(
     title = topic_title.strip() or "this topic"
     desc = (topic_description or title).strip()
     return {
-        "ai_style": "ChatGPT",
         "topic_title": title,
         "quiz": [
             {
+                "ai_style": "ChatGPT",
                 "difficulty_level": "Easy",
                 "question": f"What is the central learning objective of {title}?",
                 "options": [
@@ -423,6 +441,7 @@ def _fallback_topic_quiz(
                 "explanation": f"Syllabus focus: {desc}",
             },
             {
+                "ai_style": "ChatGPT",
                 "difficulty_level": "Moderate",
                 "question": f"Which strategy best prepares you for an exam question on {title}?",
                 "options": [
@@ -435,6 +454,7 @@ def _fallback_topic_quiz(
                 "explanation": "Exam-style mastery requires understanding plus deliberate practice.",
             },
             {
+                "ai_style": "ChatGPT",
                 "difficulty_level": "Moderate",
                 "question": f"A scenario-based question mentions {title}. What should you do first?",
                 "options": [
@@ -447,6 +467,7 @@ def _fallback_topic_quiz(
                 "explanation": f"Structured reasoning is expected at {difficulty} level.",
             },
             {
+                "ai_style": "ChatGPT",
                 "difficulty_level": "Tough",
                 "question": f"Which misconception about {title} is most dangerous before the final?",
                 "options": [
@@ -459,6 +480,7 @@ def _fallback_topic_quiz(
                 "explanation": "Syllabus order usually encodes prerequisites.",
             },
             {
+                "ai_style": "ChatGPT",
                 "difficulty_level": "Tough",
                 "question": f"How would an expert instructor evaluate your understanding of {title}?",
                 "options": [
@@ -507,7 +529,10 @@ async def generate_topic_quiz(payload: TopicQuizRequest):
     context = (payload.raw_text or "")[:12000]
 
     if ai_client is None:
+        print(f"⚠️ AI client not available, using fallback quiz for topic: {title}")
         return TopicQuizResponse(**_fallback_topic_quiz(title, description, difficulty))
+    
+    print(f"🚀 Generating quiz with Gemini for topic: {title} (AI Style: {payload.ai_style})")
     style_instruction = _get_style_instruction(payload.ai_style)
     prompt = f"""
 
@@ -585,7 +610,9 @@ Requirements:
                 temperature=0.35,
             ),
         )
+        print(f"✅ Gemini successfully generated quiz for topic: {title}")
     except Exception as exc:
+        print(f"❌ AI quiz generation failed: {exc}")
         raise HTTPException(status_code=502, detail=f"AI quiz generation failed: {exc}") from exc
 
     try:
