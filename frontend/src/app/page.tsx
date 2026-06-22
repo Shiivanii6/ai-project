@@ -385,6 +385,59 @@ export default function StudentDashboard() {
                     </div>
                   </div>
                 )}
+
+                {aiTopicMaterial && (
+                  <div className="mt-8 rounded-[28px] border border-violet-500/20 bg-violet-500/5 p-5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-violet-200">AI Notes</p>
+                        <h3 className="mt-2 text-lg font-semibold text-white">{aiTopicMaterial.topic_title || selectedTopicData.title}</h3>
+                      </div>
+                      {aiMaterialLoading ? (
+                        <span className="rounded-full bg-violet-500/10 px-3 py-1 text-xs font-semibold text-violet-100">Generating…</span>
+                      ) : (
+                        <span className="rounded-full bg-violet-500/10 px-3 py-1 text-xs font-semibold text-violet-100">Generated</span>
+                      )}
+                    </div>
+                    <div className="mt-5 space-y-5 text-sm leading-6 text-slate-200">
+                      {aiTopicMaterial.high_yield_summary && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-white">High-yield summary</h4>
+                          <p className="mt-2 whitespace-pre-wrap">{aiTopicMaterial.high_yield_summary}</p>
+                        </div>
+                      )}
+                      {aiTopicMaterial.must_know_definition && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-white">Must-know definition</h4>
+                          <p className="mt-2 whitespace-pre-wrap">{aiTopicMaterial.must_know_definition}</p>
+                        </div>
+                      )}
+                      {aiTopicMaterial.common_student_trap && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-white">Common trap</h4>
+                          <p className="mt-2 whitespace-pre-wrap">{aiTopicMaterial.common_student_trap}</p>
+                        </div>
+                      )}
+                      {aiTopicMaterial.practical_application && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-white">Practical application</h4>
+                          <p className="mt-2 whitespace-pre-wrap">{aiTopicMaterial.practical_application}</p>
+                        </div>
+                      )}
+                      {Array.isArray(aiTopicMaterial.active_recall_questions) && aiTopicMaterial.active_recall_questions.length > 0 && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-white">Active recall questions</h4>
+                          <ul className="mt-2 list-disc list-inside space-y-2 text-slate-200">
+                            {aiTopicMaterial.active_recall_questions.map((question: string, idx: number) => (
+                              <li key={idx} className="whitespace-pre-wrap">{question}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div className="mt-8 rounded-[28px] border border-white/10 bg-slate-900/90 p-5">
                   <p className="text-sm font-semibold text-slate-100">Study materials</p>
                   <div className="mt-4 space-y-3">
