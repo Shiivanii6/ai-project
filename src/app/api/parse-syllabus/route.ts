@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://127.0.0.1:8000";
+const BACKEND_URL = process.env.BACKEND_URL || `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://127.0.0.1:3000"}`;
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +8,7 @@ export async function POST(request: Request) {
   const formData = await request.formData();
 
   try {
-    const response = await fetch(`${BACKEND_URL}/api/parse-syllabus`, {
+    const response = await fetch(`${BACKEND_URL}/api/parse-syllabus`, { // Call Vercel serverless Python
       method: "POST",
       body: formData,
     });
