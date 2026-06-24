@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+:root {
+  --background: #020618;
+  --foreground: #f1f5f9;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  background-color: #020618;
+  color: #f1f5f9;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
