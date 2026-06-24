@@ -391,7 +391,7 @@ export default function StudentDashboard() {
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-violet-200">AI Notes</p>
-                        <h3 className="mt-2 text-lg font-semibold text-white">{aiTopicMaterial.topic_title || selectedTopicData.title}</h3>
+                        <h3 className="mt-2 text-lg font-semibold text-white">{aiTopicMaterial.topic_title || selectedTopicData?.title}</h3>
                       </div>
                       {aiMaterialLoading ? (
                         <span className="rounded-full bg-violet-500/10 px-3 py-1 text-xs font-semibold text-violet-100">Generating…</span>
