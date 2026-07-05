@@ -112,12 +112,8 @@ ai_client = None
 if API_KEY:
     try:
         ai_client = genai.Client(api_key=API_KEY)
-        print(f"✅ Gemini client initialized successfully with API key: {API_KEY[:20]}...")
     except Exception as exc:
-        print(f"❌ WARNING: Gemini client failed to initialize: {exc}")
-        ai_client = None
-else:
-    print("⚠️ WARNING: No GOOGLE_GENAI_API_KEY found in environment or .env file")
+        print(f"WARNING: Gemini client failed to initialize: {exc}")
 
 
 @app.get("/api/health")
@@ -277,12 +273,10 @@ async def parse_syllabus(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="File must be a PDF or image (PNG, JPG)")
 
     if ai_client is None:
-        print("⚠️ AI client not available, using local fallback for parse-syllabus")
         sample = generate_dev_roadmap(raw_text, filename)
         sample["raw_text"] = raw_text
         return sample
 
-    print(f"🚀 Generating roadmap with Gemini for: {filename}")
     prompt = f"""
 You are an elite academic curriculum architect. Analyze this syllabus and reconstruct it into a flawless, logically ordered, step-by-step chronological learning pathway.
 
@@ -308,9 +302,7 @@ Syllabus Source Text:
                 temperature=0.1,
             ),
         )
-        print("✅ Gemini successfully generated roadmap")
     except Exception as exc:
-        print(f"❌ AI request failed: {exc}")
         raise HTTPException(status_code=502, detail=f"AI request failed: {exc}") from exc
 
     try:
@@ -325,7 +317,6 @@ Syllabus Source Text:
 @app.post("/api/topic-study-material", response_model=TopicStudyMaterialResponse)
 async def generate_topic_study_material(payload: TopicStudyMaterialRequest):
     if ai_client is None:
-        print("❌ AI client not available for topic study material generation")
         raise HTTPException(
             status_code=503,
             detail=(
@@ -334,7 +325,6 @@ async def generate_topic_study_material(payload: TopicStudyMaterialRequest):
             ),
         )
 
-    print(f"🚀 Generating study material with Gemini for topic: {payload.topic_title}")
     prompt = f"""
 You are an elite university tutor.
 Generate exam-focused study material for this topic.
@@ -392,26 +382,52 @@ Syllabus context:
                 temperature=0.2,
             ),
         )
-        print(f"✅ Gemini successfully generated study material for topic: {payload.topic_title}")
     except Exception as exc:
-        print(f"❌ AI request failed for study material: {exc}")
-        raise HTTPException(status_code=502, detail=f"AI request failed: {exc}") from exc
+        return TopicStudyMaterialResponse(**_fallback_topic_study_material(payload.topic_title, payload.topic_description, payload.raw_text))
 
     try:
         parsed = json.loads(response.text)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="Backend returned invalid JSON for topic study material",
-        ) from exc
+    except json.JSONDecodeError:
+        return TopicStudyMaterialResponse(**_fallback_topic_study_material(payload.topic_title, payload.topic_description, payload.raw_text))
 
     try:
         return TopicStudyMaterialResponse(**parsed)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Generated AI output did not match expected format: {exc}",
-        ) from exc
+    except Exception:
+        return TopicStudyMaterialResponse(**_fallback_topic_study_material(payload.topic_title, payload.topic_description, payload.raw_text))
+
+
+def _fallback_topic_study_material(topic_title: str, topic_description: str, raw_text: str) -> dict:
+    title = topic_title.strip() or "This topic"
+    summary = topic_description.strip() or "Review the core idea and key relationships for this topic."
+    return {
+        "topic_title": title,
+        "high_yield_summary": (
+            f"{title} centers on {summary.lower()} "
+            "Use this topic as a foundation for the broader syllabus."
+        ),
+        "must_know_definition": (
+            f"The essential idea is {summary.lower()} "
+            "and how it connects to the rest of the course."
+        ),
+        "common_student_trap": (
+            "A common mistake is focusing on minor details instead of the main concept; "
+            "stay structured and relate each fact back to the topic goal."
+        ),
+        "active_recall_questions": [
+            f"What is the main purpose of {title}?",
+            f"How does {title} connect to the overall course objectives?",
+            f"What is one key concept you must remember from {title}?",
+        ],
+        "active_recall_answers": [
+            f"The main purpose of {title} is to explain the fundamental concept and how it applies in context.",
+            f"It connects to the course objectives by providing core understanding needed for later topics.",
+            f"One key concept is the central idea behind {title} and its practical use in exam problems.",
+        ],
+        "practical_application": (
+            "Use this topic to solve practice problems, summarize the concept in your own words, "
+            "and link it to at least one exam-style question."
+        ),
+    }
 
 
 def _fallback_topic_quiz(
@@ -529,10 +545,7 @@ async def generate_topic_quiz(payload: TopicQuizRequest):
     context = (payload.raw_text or "")[:12000]
 
     if ai_client is None:
-        print(f"⚠️ AI client not available, using fallback quiz for topic: {title}")
         return TopicQuizResponse(**_fallback_topic_quiz(title, description, difficulty))
-    
-    print(f"🚀 Generating quiz with Gemini for topic: {title} (AI Style: {payload.ai_style})")
     style_instruction = _get_style_instruction(payload.ai_style)
     prompt = f"""
 
@@ -610,9 +623,7 @@ Requirements:
                 temperature=0.35,
             ),
         )
-        print(f"✅ Gemini successfully generated quiz for topic: {title}")
     except Exception as exc:
-        print(f"❌ AI quiz generation failed: {exc}")
         raise HTTPException(status_code=502, detail=f"AI quiz generation failed: {exc}") from exc
 
     try:

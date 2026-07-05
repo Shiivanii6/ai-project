@@ -89,14 +89,15 @@ export default function StudentDashboard() {
 
       console.log("📥 Response received:", { status: response.status, statusText: response.statusText });
 
+      const respText = await response.text();
+      console.log("📝 Response text length:", respText.length);
+
       if (!response.ok) {
-        throw new Error(`Upload failed with status: ${response.status}`);
+        console.error("Backend returned error:", respText);
+        throw new Error(`Upload failed with status: ${response.status} — ${respText}`);
       }
 
-      const text = await response.text();
-      console.log("📝 Response text length:", text.length);
-      
-      const result = JSON.parse(text);
+      const result = JSON.parse(respText);
       console.log("✅ Upload successful! Data parsed:", {
         courseN: result?.course_name,
         steps: result?.target_learning_flow?.length,
@@ -139,6 +140,7 @@ export default function StudentDashboard() {
   const generateAiTopicMaterial = async () => {
     if (!selectedTopicData) return;
     setAiMaterialLoading(true);
+    setError(null);
     try {
       const response = await fetch("/api/topic-study-material", {
         method: "POST",
@@ -149,11 +151,19 @@ export default function StudentDashboard() {
           raw_text: rawText || data?.raw_text || "",
         }),
       });
-      if (!response.ok) throw new Error("Failed to generate AI topic material.");
-      const result = await response.json();
+
+      const responseText = await response.text();
+      if (!response.ok) {
+        const message = responseText || "Failed to generate AI topic material.";
+        throw new Error(message);
+      }
+
+      const result = JSON.parse(responseText);
       setAiTopicMaterial(result);
-    } catch (error) {
-      console.error(error);
+    } catch (error: any) {
+      console.error("AI topic material error:", error);
+      setError(error?.message || "Failed to generate AI topic material.");
+      setAiTopicMaterial(null);
     } finally {
       setAiMaterialLoading(false);
     }
@@ -391,7 +401,7 @@ export default function StudentDashboard() {
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-violet-200">AI Notes</p>
-                        <h3 className="mt-2 text-lg font-semibold text-white">{aiTopicMaterial.topic_title || selectedTopicData.title}</h3>
+                        <h3 className="mt-2 text-lg font-semibold text-white">{aiTopicMaterial.topic_title || selectedTopicData?.title}</h3>
                       </div>
                       {aiMaterialLoading ? (
                         <span className="rounded-full bg-violet-500/10 px-3 py-1 text-xs font-semibold text-violet-100">Generating…</span>
