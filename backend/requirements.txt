@@ -3,5 +3,3 @@ uvicorn
 pypdf
 google-genai
 python-multipart
-Pillow
-pytesseract
